@@ -1,0 +1,4 @@
+discord
+langchain_ollama
+langchain 
+dotenv
