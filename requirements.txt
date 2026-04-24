@@ -3,6 +3,6 @@ langchain_ollama
 langchain_astradb
 langchain 
 dotenv
-retriever
+vector
 astrapy
 panda
