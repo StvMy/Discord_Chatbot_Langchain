@@ -1,17 +1,20 @@
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from astrapy import DataAPIClient
-from astrapy.constants import VectorMetric
 from langchain_astradb import AstraDBVectorStore
 import os
 import pandas as pd
 from dotenv import load_dotenv
+import json
 
-
-collection_name = "restaurant_reviews"
+# ------------------------------ CHECK THIS BEFORE RUNNING BOT -----------------------------------------
+addMore = False #Change to True if want to add more data to collection
+collection_name = "chatHistory"
 
 # load csv
-df = pd.read_csv("realistic_restaurant_reviews.csv")
+# df = pd.read_csv("CSV files\\realistic_restaurant_reviews.csv")
+
+# declare embedding model
 embeddings = OllamaEmbeddings(model="mxbai-embed-large:latest")
 
 # load .ENV
@@ -19,50 +22,76 @@ load_dotenv()
 astraDB_token = os.getenv("ASTRADB_TOKEN")
 astraDB_endpoint = os.getenv("ASTRADB_END_POINT")
 
-# Initialize client
-client = DataAPIClient(astraDB_token)
-db = client.get_database(astraDB_endpoint)
-
-# Verify connection
+# Initialize client --------------------------------------------------------------------------
 try:
-    info = db.info.name
-    print(f"Connected to database: {info}")
+    client = DataAPIClient(astraDB_token)
+    print("Client connected")
 except Exception as e:
-    print(f"Database not found or connection failed: {e}")
+    print(f"Client failed to connect: {e}")
+try:
+    db = client.get_database(astraDB_endpoint)
+    print("db connected")
+except Exception as e:
+    print(f"db failed to connect: {e}")
 
-# prepare data to vectorise
+
+# Attempt to list collections as a connectivity check------------------------------------------
+try:
+    collections = db.list_collection_names()
+    print("Successfully connected! Collections found:", collections)
+except Exception as e:
+    print(f"Connection failed: {e}")
+
+
+# Connect or Build collection---------------------------------------------------------------------
+vector_store = AstraDBVectorStore(
+    collection_name=collection_name,
+    embedding=embeddings,
+    api_endpoint=astraDB_endpoint,
+    token=astraDB_token,     
+)
+print(f"Collection Connected : {collection_name} ")
+
+
+# prepare data to vectorise (can be customized)-------------------------------------------------
 documents = []
 ids = []
-for i,row in df.iterrows():
-    document = Document(
-        page_content=row["Title"]+" "+row["Review"],
-        metadata={"Date":row["Date"],
-                  "Rating":row["Rating"]},
-        id=str(i)
-    )
-    ids.append(str(i))
-    documents.append(document)
+i=0
+try:
+    while True:
+        with open(f"json\\document{i}.json", "r") as f:       #DID NOT WORK!!
+            document = json.load(f) # load (data type dict)
+            doc = Document( # Reconstruck to Document
+                page_content=document["page_content"],
+                metadata=document["metadata"]
+            )
+            ids.append(str(i))
+            documents.append(doc)
+            i+=1
+        # document = Document(
+        #     page_content=row["Title"]+" "+row["Review"],
+        #     metadata={"Date":row["Date"],
+        #               "Rating":row["Rating"]},
+        #     id=str(i)
+        # )
+except:
+    print("Data preparation complete")
 
-# Verify if the collection exist of not
-if collection_name not in db.list_collection_names():
-    # Create Collection
-    vector_store = AstraDBVectorStore(
-        collection_name=collection_name,
-        embedding=embeddings,
-        api_endpoint=astraDB_endpoint,
-        token=astraDB_token,     
-    )
-    print("collection build successfully")
 
-    # Insert a documents
+# Insert a documents -------------------------------------------------------------------------
+if (addMore == True):
     vector_store.add_documents(documents=documents, ids=ids)
 
 
-# Perform Vector retrieval
-retriever = vector_store.as_retriever(
-    search_type="mmr",
-    search_kwargs={'k':5}
-)
+try:
+    # Perform Vector retrieval
+    retriever = vector_store.as_retriever(
+        search_type="mmr",
+        search_kwargs={'k':5}
+    )
+except Exception as e:
+    print(f"Failed to connect to collection: {e}")
+    retriever = None
 
 
 
