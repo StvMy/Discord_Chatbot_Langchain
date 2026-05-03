@@ -9,8 +9,9 @@ import pandas as pd
 from dotenv import load_dotenv
 import os
 import asyncio
-from vector import retriever
 import json
+from vector import retriever
+
 
 members = [] #hold member list    
 
@@ -128,18 +129,27 @@ async def on_message(message):
             # print(summary.content)
             memories.write("\n"+str(summary.content)+ f"\n MEMORY CREATED AT {date} -- END OF MEMORY --")
             memories.close()
+            print("memory created")
 
-            # PLACE TO SAVE CHAT as Json 
+            # Kill connection to discord bot
+            await bot.close()
+
+            # PLACE TO SAVE CHAT as Json locally
             for i,row in dfMain.iterrows():
+                print(f"ITERATION: {i}")
                 doc = Document(
                     page_content=row["subject"]+" "+row["content"],  # Turn Dataframe into Document
-                    metadata={"Date":row["date"]}
+                    metadata={"Date":row["date"]}   
                 )
-                with open(f"json\\document{i}.json", "a") as f:      # Dump document to Json
-                    json.dump(doc.model_dump(), f)            
+                print(f"Construct: {i}")
+                try:
+                    with open(f"json\\chat_{i}.json", "w") as f:      # Dump document to Json
+                        json.dump(doc.model_dump(), f)       #ONLY WORK ONCE !!!
+                        print("Dump")
+                except Exception as e:
+                    print(f"failed to dump jason: {e}")            
             
-            # Turn off bot
-            await bot.close()
+
             return
         else:
             memories.close()
@@ -155,14 +165,18 @@ async def on_message(message):
         dftemp = pd.DataFrame({
             "subject":[humanMSG.content.split(":")[0]],
             "content":[humanMSG.content.split(":")[1]],
-            "date":[date]
+            "date":[str(date)]
         })
         dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
 
-        # CHAIN -------------------------
+        # CHAIN -------------------------------------------------------------------------------------
+        if (retriever==None):#if no data in collection then return nothing to retrive
+            ctx = "nothing to retrive"  
+        else:
+            ctx = retriever.invoke(humanMSG.content)
         chain = template | chat
         result = chain.invoke({"convo":messages,
-                               "context":[SystemMessage(content=f"here is some information you can use, ignore if the information does not realte to the conversation : {retriever.invoke(humanMSG.content)}")] # [] is needed for the template require list
+                               "context":[SystemMessage(content=f"here is some information you can use, ignore if the information does not realte to the conversation : {ctx}")] # [] is needed for the template require list
                                }) 
         # print(f"retrieved: {retriever.invoke(humanMSG.content)}") # DEBUG PRINT RETRIEVED
 
@@ -171,7 +185,7 @@ async def on_message(message):
         dftemp = pd.DataFrame({
             "subject":[aiMSG.content.split(":")[0]],
             "content":[aiMSG.content.split(":")[1]],
-            "date":[date]
+            "date":[str(date)]
         })
         dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
         
