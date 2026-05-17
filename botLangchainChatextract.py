@@ -4,6 +4,9 @@ from langchain_core.documents import Document
 from langchain_ollama.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.messages import AIMessage, SystemMessage, HumanMessage
+from PIL import Image
+import requests
+from io import BytesIO
 import logging
 import pandas as pd
 from dotenv import load_dotenv
@@ -26,7 +29,7 @@ memories = open("memories.txt","a", encoding='utf8')         # Change back mode 
 
 
 # print(systemMessage)   #DEBUG---------------------------
-model= "gemma4:e2b"  # model used
+model= "gemma4:e4b"  # model used
 chat = ChatOllama(
     model=model,
     temperature=1,
@@ -121,7 +124,7 @@ async def on_message(message):
             date = message.created_at
             for i in range(len(messages)-1):  #remove sysprompt from list
                 messages[i] = messages[i+1]
-           
+        
 
             # Create summerize of previous interation
             messages.append(SystemMessage(content="you are being shutted down, now summarize this chat in english so you can easily know important details in the next session!. remember important points (names, event, story, name, specific topics, language of each member), also give your opinion for each member you interacted with so you will remember how to get the conversation going with them, make sure in the next session you remember you have been shutted down before."))
@@ -144,7 +147,7 @@ async def on_message(message):
                 print(f"Construct: {i}")
                 try:
                     with open(f"json\\chat_{i}.json", "w") as f:      # Dump document to Json
-                        json.dump(doc.model_dump(), f)       #ONLY WORK ONCE !!!
+                        json.dump(doc.model_dump(), f)       
                         print("Dump")
                 except Exception as e:
                     print(f"failed to dump jason: {e}")            
@@ -159,32 +162,54 @@ async def on_message(message):
     if not message.content.startswith(bot.command_prefix):
         if message.author == bot.user:return                              # Do not response the bot message
         date = message.created_at
-
-        humanMSG = HumanMessage(content=f"{message.author.display_name}:{message.content}")
+        
+        # catch all chat or images
+        allmsg = ""
+        try:
+            msgContent = (f"{message.author.display_name}:{message.content}") #BOT CANT DETECT IMAGE FILE WHYYY
+            allmsg+=msgContent
+            print(f"MSG CONTENT: {msgContent}")
+        except Exception as e:
+            attachContent = None
+            print(f"No Text:{e}")       
+        try:
+            for attachment in message.attachments:           
+                attachContent = (f"image_url: {str(attachment.url)}")
+            allmsg+=attachContent
+            print(f"ATTCH CONTENT: {attachContent}")
+        except Exception as e:
+            msgContent = None
+            print(f"No Image:{e}")
+        humanMSG = HumanMessage(content=(allmsg))   
+        
         messages.append(humanMSG)     # append user input to the message sent-----------------------
+        print(f"HUMAN MSG: {humanMSG.content}")
         dftemp = pd.DataFrame({
             "subject":[humanMSG.content.split(":")[0]],
-            "content":[humanMSG.content.split(":")[1]],
+            "content":[humanMSG.content.split(":")[:1]],
             "date":[str(date)]
         })
         dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
 
-        # CHAIN -------------------------------------------------------------------------------------
-        if (retriever==None):#if no data in collection then return nothing to retrive
-            ctx = "nothing to retrive"  
-        else:
-            ctx = retriever.invoke(humanMSG.content)
-        chain = template | chat
-        result = chain.invoke({"convo":messages,
-                               "context":[SystemMessage(content=f"here is some information you can use, ignore if the information does not realte to the conversation : {ctx}")] # [] is needed for the template require list
-                               }) 
-        # print(f"retrieved: {retriever.invoke(humanMSG.content)}") # DEBUG PRINT RETRIEVED
 
-        aiMSG = AIMessage(content=f"you:{result.content}")
+        async with message.channel.typing():
+            # CHAIN -------------------------------------------------------------------------------------
+            if (retriever==None):#if no data in collection then return nothing to retrive
+                ctx = "nothing to retrive"  
+            else:
+                ctx = retriever.invoke(humanMSG.content)
+            chain = template | chat
+            result = chain.invoke({"convo":messages,
+                                "context":[SystemMessage(content=f"here is some information you can use, ignore if the information does not realte to the conversation : {ctx}")] # [] is needed for the template require list
+                                }) 
+            # print(f"retrieved: {retriever.invoke(humanMSG.content)}") # DEBUG PRINT RETRIEVED
+
+
+        aiMSG = AIMessage(content=f"{result.content}")
         messages.append(aiMSG)                           # append bot response----------------------
         dftemp = pd.DataFrame({
-            "subject":[aiMSG.content.split(":")[0]],
-            "content":[aiMSG.content.split(":")[1]],
+            "subject":["BOT"],
+            "content":[aiMSG.content.split(",")[1]],
             "date":[str(date)]
         })
         dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
