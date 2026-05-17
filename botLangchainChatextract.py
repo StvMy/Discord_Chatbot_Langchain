@@ -4,7 +4,6 @@ from langchain_core.documents import Document
 from langchain_ollama.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.messages import AIMessage, SystemMessage, HumanMessage
-from PIL import Image
 import requests
 from io import BytesIO
 import logging
