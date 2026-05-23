@@ -4,14 +4,13 @@ from langchain_core.documents import Document
 from langchain_ollama.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.messages import AIMessage, SystemMessage, HumanMessage
-import requests
-from io import BytesIO
 import logging
 import pandas as pd
 from dotenv import load_dotenv
 import os
 import asyncio
 import json
+import time
 from vector import retriever
 
 
@@ -28,6 +27,7 @@ memories = open("memories.txt","a", encoding='utf8')         # Change back mode 
 
 
 # print(systemMessage)   #DEBUG---------------------------
+active = None
 model= "gemma4:e4b"  # model used
 chat = ChatOllama(
     model=model,
@@ -66,6 +66,7 @@ intents = discord.Intents.default()
 intents.message_content = True     # Set intents to true in code
 intents.members = True
 intents.presences = True
+
 
 # ---------------------------------------------------
 bot = commands.Bot(command_prefix="!", intents=intents) # set prefix so every bot command will start with "!" (in discord server)
@@ -112,122 +113,168 @@ async def mention(ctx):
             
 # ON EVENT FUNCTION ----------------------------       
 @bot.event
-async def on_member_join(member):
-    await member.send(f"welcome to the server {member.name}")
+async def on_guild_join(guild):
+    global active
+    channel_names = [channel.name for channel in guild.channels]
+    print(channel_names)
+    integrations = await guild.integrations()
+    for integration in integrations:
+        if isinstance(integration, discord.BotIntegration):
+            if integration.application.user.name == bot.user.name:
+                inviter = integration.user
+                if inviter:
+                    try:
+                        global send_options
+                        send_options = DropdownView(channel_names)
+                        await inviter.send(view=send_options)
+                        await send_options.wait()
+                        active = send_options.choose
+                        print(f"active: {active}")
+                    except discord.Forbidden:
+                        # User may have DMs closed
+                        print(f"Could not DM {inviter.name}")
+                break
 
 @bot.event
 async def on_message(message):
     global dfMain 
-    if message.content.lower() == "/exit":
-        if len(messages)>0:
-            date = message.created_at
-            for i in range(len(messages)-1):  #remove sysprompt from list
-                messages[i] = messages[i+1]
-        
+    global active
+    if not isinstance(message.channel, discord.DMChannel):
+        print(f"{message.channel}, {active}") 
+  
 
-            # Create summerize of previous interation
-            messages.append(SystemMessage(content="you are being shutted down, now summarize this chat in english so you can easily know important details in the next session!. remember important points (names, event, story, name, specific topics, language of each member), also give your opinion for each member you interacted with so you will remember how to get the conversation going with them, make sure in the next session you remember you have been shutted down before."))
-            summary = chat.invoke(messages)  # the summarize is forced to the model the data is raw and not structured.
-            # print(summary.content)
-            memories.write("\n"+str(summary.content)+ f"\n MEMORY CREATED AT {date} -- END OF MEMORY --")
-            memories.close()
-            print("memory created")
-
-            # Kill connection to discord bot
-            await bot.close()
-
-            # PLACE TO SAVE CHAT as Json locally
-            for i,row in dfMain.iterrows():
-                print(f"ITERATION: {i}")
-                doc = Document(
-                    page_content=row["subject"]+" "+row["content"],  # Turn Dataframe into Document
-                    metadata={"Date":row["date"]}   
-                )
-                print(f"Construct: {i}")
-                try:
-                    with open(f"json\\chat_{i}.json", "w") as f:      # Dump document to Json
-                        json.dump(doc.model_dump(), f)       
-                        print("Dump")
-                except Exception as e:
-                    print(f"failed to dump jason: {e}")            
+        if message.content.lower() == "/exit":
+            if len(messages)>0:
+                date = message.created_at
+                for i in range(len(messages)-1):  #remove sysprompt from list
+                    messages[i] = messages[i+1]
             
 
-            return
-        else:
-            memories.close()
-            await bot.close()
+                # Create summerize of previous interation
+                messages.append(SystemMessage(content="you are being shutted down, now summarize this chat in english so you can easily know important details in the next session!. remember important points (names, event, story, name, specific topics, language of each member), also give your opinion for each member you interacted with so you will remember how to get the conversation going with them, make sure in the next session you remember you have been shutted down before."))
+                summary = chat.invoke(messages)  # the summarize is forced to the model the data is raw and not structured.
+                # print(summary.content)
+                memories.write("\n"+str(summary.content)+ f"\n MEMORY CREATED AT {date} -- END OF MEMORY --")
+                memories.close()
+                print("memory created")
 
+                # Kill connection to discord bot
+                await bot.close()
 
-    if not message.content.startswith(bot.command_prefix):
-        if message.author == bot.user:return                              # Do not response the bot message
-        date = message.created_at
-        
-        # catch all chat or images
-        allmsg = ""
-        try:
-            msgContent = (f"{message.author.display_name}:{message.content}") #BOT CANT DETECT IMAGE FILE WHYYY
-            allmsg+=msgContent
-            print(f"MSG CONTENT: {msgContent}")
-        except Exception as e:
-            attachContent = None
-            print(f"No Text:{e}")       
-        try:
-            for attachment in message.attachments:           
-                attachContent = (f"image_url: {str(attachment.url)}")
-            allmsg+=attachContent
-            print(f"ATTCH CONTENT: {attachContent}")
-        except Exception as e:
-            msgContent = None
-            print(f"No Image:{e}")
-        humanMSG = HumanMessage(content=(allmsg))   
-        
-        messages.append(humanMSG)     # append user input to the message sent-----------------------
-        print(f"HUMAN MSG: {humanMSG.content}")
-        dftemp = pd.DataFrame({
-            "subject":[humanMSG.content.split(":")[0]],
-            "content":[humanMSG.content.split(":")[:1]],
-            "date":[str(date)]
-        })
-        dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
+                # PLACE TO SAVE CHAT as Json locally
+                for i,row in dfMain.iterrows():
+                    print(f"ITERATION: {i}")
+                    doc = Document(
+                        page_content=row["subject"]+" "+row["content"],  # Turn Dataframe into Document
+                        metadata={"Date":row["date"]}   
+                    )
+                    print(f"Construct: {i}")
+                    try:
+                        with open(f"json\\chat_{i}.json", "w") as f:      # Dump document to Json
+                            json.dump(doc.model_dump(), f)       
+                            print("Dump")
+                    except Exception as e:
+                        print(f"failed to dump jason: {e}")            
+                
 
-
-        async with message.channel.typing():
-            # CHAIN -------------------------------------------------------------------------------------
-            if (retriever==None):#if no data in collection then return nothing to retrive
-                ctx = "nothing to retrive"  
+                return
             else:
-                ctx = retriever.invoke(humanMSG.content)
-            chain = template | chat
-            result = chain.invoke({"convo":messages,
-                                "context":[SystemMessage(content=f"here is some information you can use, ignore if the information does not realte to the conversation : {ctx}")] # [] is needed for the template require list
-                                }) 
-            # print(f"retrieved: {retriever.invoke(humanMSG.content)}") # DEBUG PRINT RETRIEVED
+                memories.close()
+                await bot.close()
 
 
-        aiMSG = AIMessage(content=f"{result.content}")
-        messages.append(aiMSG)                           # append bot response----------------------
-        dftemp = pd.DataFrame({
-            "subject":["BOT"],
-            "content":[aiMSG.content.split(",")[1]],
-            "date":[str(date)]
-        })
-        dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
-        
-        # os.system('cls' if os.name == 'nt' else 'clear')   # DEBUG - TO PRINT CONVO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        print("\n\n\n-----------------CHAT-----------------------\n")
-        for i in messages:          
-            print(f"->{i.content}")
-        
+        if (not message.content.startswith(bot.command_prefix) and message.channel.name == active): # function to ask inviter for the channel still on progress
+            if message.author == bot.user:return                              # Do not response the bot message
+            date = message.created_at
+            # catch all chat or images
+            allmsg = ""
+            try:
+                msgContent = (f"{message.author.display_name}:{message.content}") 
+                allmsg+=msgContent
+                print(f"MSG CONTENT: {msgContent}")
+            except Exception as e:
+                attachContent = None
+                print(f"No Text:{e}")       
+            try:
+                for attachment in message.attachments:           
+                    attachContent = (f"image_url: {str(attachment.url)}")
+                allmsg+=attachContent
+                print(f"ATTCH CONTENT: {attachContent}")
+            except Exception as e:
+                msgContent = None
+                print(f"No Image:{e}")
+            humanMSG = HumanMessage(content=(allmsg))   
+            
+            messages.append(humanMSG)     # append user input to the message sent-----------------------
+            print(f"HUMAN MSG: {humanMSG.content}")
+            dftemp = pd.DataFrame({
+                "subject":[humanMSG.content.split(":")[0]],
+                "content":[humanMSG.content.split(":")[:1]],
+                "date":[str(date)]
+            })
+            dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
 
-        await message.channel.send(result.content)   # SEND model reply to discord
 
-    # Crucial line: allows the bot to process other commands
-    await bot.process_commands(message)
+            async with message.channel.typing():
+                # CHAIN -------------------------------------------------------------------------------------
+                if (retriever==None):#if no data in collection then return nothing to retrive
+                    ctx = "nothing to retrive"  
+                else:
+                    ctx = retriever.invoke(humanMSG.content)
+                chain = template | chat
+                result = chain.invoke({"convo":messages,
+                                    "context":[SystemMessage(content=f"here is some information you can use, ignore if the information does not realte to the conversation : {ctx}")] # [] is needed for the template require list
+                                    }) 
+                # print(f"retrieved: {retriever.invoke(humanMSG.content)}") # DEBUG PRINT RETRIEVED
+
+
+            aiMSG = AIMessage(content=f"{result.content}")
+            messages.append(aiMSG)                           # append bot response----------------------
+            dftemp = pd.DataFrame({
+                "subject":["BOT"],
+                "content":[result.content],
+                "date":[str(date)]
+            })
+            dfMain = pd.concat([dftemp,dfMain],ignore_index=True)
+            
+            # os.system('cls' if os.name == 'nt' else 'clear')   # DEBUG - TO PRINT CONVO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            print("\n\n\n-----------------CHAT-----------------------\n")
+            for i in messages:          
+                print(f"->{i.content}")
+            
+
+            await message.channel.send(result.content)   # SEND model reply to discord
+
+        # Crucial line: allows the bot to process other commands
+        await bot.process_commands(message)
 
 
 # ----- ON CALL FUNCTION -----
 async def warn(message):
     await message.channel.send(f"dont say that {message.author.mention}")
+
+# ----- Classes -----
+class MultipleChoice(discord.ui.Select):
+    def __init__(self,channelCount:list,parent_view):   
+        self.parent_view = parent_view                                                                                                
+        options = []   
+        for i in channelCount:
+            options.append(discord.SelectOption(label=i, description = i))
+        super().__init__(placeholder='Choose your channel for rocky to chat...', min_values=1, max_values=1, options=options)
+
+            
+    async def callback(self, interaction: discord.Interaction):
+        choose = self.values[0]
+        self.parent_view.choose = choose
+        self.parent_view.stop()
+        await interaction.response.send_message(f'active at: {choose}!')
+        
+        
+class DropdownView(discord.ui.View):
+    def __init__(self, channelcount):
+        super().__init__()
+        self.choose = None
+        self.add_item(MultipleChoice(channelcount,self)) 
 
 
 bot.run(token=token,log_handler=handler,log_level=logging.DEBUG) # RUN BOT
