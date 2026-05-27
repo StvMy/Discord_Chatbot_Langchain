@@ -24,6 +24,22 @@ with open("memories.txt","r",encoding='utf8') as memories:
         systemMessage+=f"this is summary of your last chat session \n{line}"  # Handle open memories file in read or overwrite mode
 memories = open("memories.txt","a", encoding='utf8')         # Change back mode to overwrite
 
+# Create json for guild list with bot
+try:
+    with open(f"json\\guild channel\\guild_list.json", "x"):  
+        print("create file guild list")
+except:
+    print("guild list exist")
+
+if os.path.getsize("json\\guild channel\\guild_list.json")>0:
+    with open(f"json\\guild channel\\guild_list.json", "r") as f:
+        guild_list = json.load(f)
+        print(guild_list)
+else:
+    guild_list = []
+    print("---NO GUILD---")
+
+
 
 
 # print(systemMessage)   #DEBUG---------------------------
@@ -33,16 +49,14 @@ chat = ChatOllama(
     model=model,
     temperature=1,
     )
-template = ChatPromptTemplate.from_messages([
-    MessagesPlaceholder(variable_name="convo"),
-    MessagesPlaceholder(variable_name="context")
-])
-messages= [ 
-    SystemMessage(content=systemMessage)         # to contain the messages
-    ]
-memory = [
-    
-    ]                                    # to contain chat history without system prompt
+template =  ChatPromptTemplate.from_messages([
+                MessagesPlaceholder(variable_name="convo"),
+                MessagesPlaceholder(variable_name="context")
+            ])
+messages= [SystemMessage(content=systemMessage)]         # to contain the messages
+
+memory = []                                    # to contain chat history without system prompt
+
 dfMain = pd.DataFrame()
 # tools=[{
 #     'type': 'function',
@@ -110,11 +124,19 @@ async def mention(ctx):
     else:
         mentioned = str(members[int(message.content)])
         await ctx.send(f"HELLO {mention(ctx.guild.get_member(members[int(message.content)]))}")#<-something wrong here
-            
+
+@bot.command
+async def add_channel(ctx):
+    if ctx.message in guild_list:
+        ctx.send("YES?")
+    ctx.send(ctx.message)
+
+
 # ON EVENT FUNCTION ----------------------------       
 @bot.event
 async def on_guild_join(guild):
     global active
+    global guild_list
     channel_names = [channel.name for channel in guild.channels]
     print(channel_names)
     integrations = await guild.integrations()
@@ -125,24 +147,36 @@ async def on_guild_join(guild):
                 if inviter:
                     try:
                         global send_options
-                        send_options = DropdownView(channel_names)
-                        await inviter.send(view=send_options)
-                        await send_options.wait()
-                        active = send_options.choose
-                        print(f"active: {active}")
+
+                        if not(guild.name in guild_list): 
+                            guild_list.append(guild.name)
+
+                            send_options = DropdownView(channel_names)
+                            await inviter.send(view=send_options)
+                            await send_options.wait()
+                            active = [send_options.choose]
+
+                            with open(f"json\\guild channel\\guild_{guild.name}.json", "w") as f:  # dump channel in active guild
+                                json.dump(active,f)   
+                            with open(f"json\\guild channel\\guild_list.json", "w") as f:   # dump guild list
+                                json.dump(guild_list,f)
+                            print(f"active: {active}")
+                        else:
+                            with open(f"json\\guild channel\\guild_{guild.name}.json", "r") as f:
+                                channel = json.load(f)
+                            inviter.send(f"This bot is already in {guild.name}, {channel} channel ----- You can always add more channel with command !add_channel")
+                              
                     except discord.Forbidden:
                         # User may have DMs closed
                         print(f"Could not DM {inviter.name}")
                 break
 
 @bot.event
-async def on_message(message):
+async def on_message(message): #ADD open json to check if channel listed
     global dfMain 
     global active
     if not isinstance(message.channel, discord.DMChannel):
         print(f"{message.channel}, {active}") 
-  
-
         if message.content.lower() == "/exit":
             if len(messages)>0:
                 date = message.created_at
@@ -253,28 +287,27 @@ async def on_message(message):
 async def warn(message):
     await message.channel.send(f"dont say that {message.author.mention}")
 
+
 # ----- Classes -----
 class MultipleChoice(discord.ui.Select):
     def __init__(self,channelCount:list,parent_view):   
-        self.parent_view = parent_view                                                                                                
+        self.parent_view = parent_view                                                                                          
         options = []   
         for i in channelCount:
             options.append(discord.SelectOption(label=i, description = i))
-        super().__init__(placeholder='Choose your channel for rocky to chat...', min_values=1, max_values=1, options=options)
-
-            
+            super().__init__(placeholder='Choose your channel for rocky to chat...', min_values=1, max_values=1, options=options)
+          
     async def callback(self, interaction: discord.Interaction):
         choose = self.values[0]
         self.parent_view.choose = choose
         self.parent_view.stop()
         await interaction.response.send_message(f'active at: {choose}!')
-        
-        
+             
 class DropdownView(discord.ui.View):
-    def __init__(self, channelcount):
+    def __init__(self, channelcount,status_guild):
         super().__init__()
         self.choose = None
-        self.add_item(MultipleChoice(channelcount,self)) 
+        self.add_item(MultipleChoice(channelcount,self,status_guild)) 
 
 
 bot.run(token=token,log_handler=handler,log_level=logging.DEBUG) # RUN BOT
