@@ -137,7 +137,7 @@ async def add_channel(ctx):
 async def on_guild_join(guild):
     global active
     global guild_list
-    channel_names = [channel.name for channel in guild.channels]
+    channel_names = [channel.name for channel in guild.text_cchannels]
     print(channel_names)
     integrations = await guild.integrations()
     for integration in integrations:
@@ -147,7 +147,6 @@ async def on_guild_join(guild):
                 if inviter:
                     try:
                         global send_options
-
                         if not(guild.name in guild_list): 
                             guild_list.append(guild.name)
 
@@ -155,16 +154,24 @@ async def on_guild_join(guild):
                             await inviter.send(view=send_options)
                             await send_options.wait()
                             active = [send_options.choose]
-
                             with open(f"json\\guild channel\\guild_{guild.name}.json", "w") as f:  # dump channel in active guild
                                 json.dump(active,f)   
                             with open(f"json\\guild channel\\guild_list.json", "w") as f:   # dump guild list
                                 json.dump(guild_list,f)
                             print(f"active: {active}")
                         else:
-                            with open(f"json\\guild channel\\guild_{guild.name}.json", "r") as f:
-                                channel = json.load(f)
-                            inviter.send(f"This bot is already in {guild.name}, {channel} channel ----- You can always add more channel with command !add_channel")
+                            try:
+                                with open(f"json\\guild channel\\guild_{guild.name}.json", "r") as f:
+                                    channel = json.load(f)
+                                await inviter.send(f"This bot is already in {guild.name}, {channel} channel ----- You can always add more channel with command !add_channel")
+                            except Exception:
+                                await inviter.send(f"This guild have invite the bot at some point but got deleted !")
+                                send_options = DropdownView(channel_names)
+                                await inviter.send(view=send_options)
+                                await send_options.wait()
+                                active = [send_options.choose]
+                                with open(f"json\\guild channel\\guild_{guild.name}.json", "w") as f:  # dump channel in active guild
+                                    json.dump(active,f)               
                               
                     except discord.Forbidden:
                         # User may have DMs closed
@@ -304,10 +311,10 @@ class MultipleChoice(discord.ui.Select):
         await interaction.response.send_message(f'active at: {choose}!')
              
 class DropdownView(discord.ui.View):
-    def __init__(self, channelcount,status_guild):
+    def __init__(self, channelcount):
         super().__init__()
         self.choose = None
-        self.add_item(MultipleChoice(channelcount,self,status_guild)) 
+        self.add_item(MultipleChoice(channelcount,self)) 
 
 
 bot.run(token=token,log_handler=handler,log_level=logging.DEBUG) # RUN BOT
